@@ -11,7 +11,7 @@ use mpd_client::responses::{PlayState, Song, SongInQueue, Status};
 use mpd_utils::MultiHostClient;
 use regex::Regex;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
+use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep};
 use tracing::{debug, error, info};
 
 use crate::album_art::AlbumArtClient;
@@ -24,15 +24,6 @@ mod config;
 mod mpd_conn;
 
 pub const IDLE_TIME: u64 = 3;
-
-fn map_display_type(display_type: ConfigDisplayType) -> DisplayType {
-    match display_type {
-        ConfigDisplayType::Name => DisplayType::Name,
-        ConfigDisplayType::State => DisplayType::State,
-        ConfigDisplayType::Details => DisplayType::Details,
-    }
-}
-
 struct Tokens {
     details: Vec<String>,
     state: Vec<String>,
@@ -72,6 +63,14 @@ async fn main() {
     let mut service = Service::new(&config, tokens, tx);
     service.start();
 
+    let display_toggle_interval = config.format.display_type_interval;
+    let display_toggle_period = Duration::from_secs(display_toggle_interval.max(1));
+    let mut display_toggle = interval_at(
+        Instant::now() + display_toggle_period,
+        display_toggle_period,
+    );
+    display_toggle.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             Ok(event) = mpd.recv() => {
@@ -90,7 +89,7 @@ async fn main() {
 
                         (status, current_song)
                     }).await {
-                        service.update_state(&status, current_song).await;
+                        service.update_state(&status, current_song, false).await;
                     }
                 }
             }
@@ -111,7 +110,7 @@ async fn main() {
 
                             (status, current_song)
                         }).await {
-                            service.update_state(&status, current_song).await;
+                            service.update_state(&status, current_song, false).await;
                         }
                     },
                     ServiceEvent::Error(err) => {
@@ -119,6 +118,21 @@ async fn main() {
                         sleep(Duration::from_secs(IDLE_TIME)).await;
                         service.start();
                     }
+                }
+            },
+            _ = display_toggle.tick(), if display_toggle_interval > 0 => {
+                if let Ok((Some(status), current_song)) = mpd.with_client(|client| async move {
+                    let status = client.command(commands::Status).await.ok();
+
+                    let current_song = if status.is_some() {
+                        client.command(commands::CurrentSong).await.ok().flatten()
+                    } else {
+                        None
+                    };
+
+                    (status, current_song)
+                }).await {
+                    service.update_state(&status, current_song, true).await;
                 }
             },
         }
@@ -135,6 +149,7 @@ struct Service<'a> {
     album_art_client: AlbumArtClient,
     drpc: DiscordClient,
     tokens: Tokens,
+    show_details: bool,
 }
 
 impl<'a> Service<'a> {
@@ -190,6 +205,7 @@ impl<'a> Service<'a> {
             album_art_client,
             drpc,
             tokens,
+            show_details: matches!(config.format.display_type, ConfigDisplayType::Details),
         }
     }
 
@@ -198,7 +214,12 @@ impl<'a> Service<'a> {
         self.drpc.start();
     }
 
-    async fn update_state(&mut self, status: &Status, current_song: Option<SongInQueue>) {
+    async fn update_state(
+        &mut self,
+        status: &Status,
+        current_song: Option<SongInQueue>,
+        toggle_display: bool,
+    ) {
         // https://discord.com/developers/docs/rich-presence/how-to#updating-presence-update-presence-payload
         const MAX_BYTES: usize = 128;
 
@@ -206,6 +227,10 @@ impl<'a> Service<'a> {
 
         if matches!(status.state, PlayState::Playing) {
             if let Some(song_in_queue) = current_song {
+                if toggle_display {
+                    self.show_details = !self.show_details;
+                }
+
                 let song = song_in_queue.song;
 
                 let mut details = clamp(
@@ -256,7 +281,11 @@ impl<'a> Service<'a> {
 
                 let url = self.album_art_client.get_album_art_url(song).await;
 
-                let display_type = map_display_type(format.display_type);
+                let display_type = if self.show_details {
+                    DisplayType::Details
+                } else {
+                    DisplayType::State
+                };
 
                 let res = self.drpc.set_activity(|act| {
                     let mut act = act

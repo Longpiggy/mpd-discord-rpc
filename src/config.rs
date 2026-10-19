@@ -39,6 +39,8 @@ pub struct Format {
     pub small_text: String,
     #[serde(default)]
     pub display_type: DisplayType,
+    #[serde(default = "default_display_type_interval")]
+    pub display_type_interval: u64,
     #[serde(default)]
     pub button1_text: String,
     #[serde(default)]
@@ -60,6 +62,7 @@ impl Default for Format {
             large_text: String::new(),
             small_text: String::new(),
             display_type: DisplayType::default(),
+            display_type_interval: default_display_type_interval(),
             button1_text: String::new(),
             button1_link: String::new(),
             button2_text: String::new(),
@@ -113,6 +116,10 @@ fn default_state_format() -> String {
 
 fn default_image() -> String {
     "notes".to_string()
+}
+
+const fn default_display_type_interval() -> u64 {
+    10
 }
 
 const fn default_discord_id() -> u64 {

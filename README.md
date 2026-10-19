@@ -75,8 +75,12 @@ this will be at `~/.config/discord-rpc/config.toml`
     image. Setting this to `""` disables the hover.
   - **small_text** - A format string that is displayed upon hovering the small
     image. Setting this to `""` disables the hover.
-  - **display_type** - The type of content to display in the status. Can be one
-    of `name`, `state` or `details`. Defaults to `state`.
+  - **display_type** - Chooses the initial status line. While a song is playing,
+    the status alternates between `state` and `details` using the
+    `display_type_interval` below. Set this to `details` to start with details;
+    other values start with state.
+  - **display_type_interval** - Seconds between display switches. Defaults to
+    `10`; set to `0` to disable switching.
   - **button1_text** - The label of the first button that is shown in activity.
   - **button1_link** - The url of the first button.
   - **button2_text** - The label of the second button that is shown in activity.
@@ -118,6 +122,7 @@ small_image = "notes"
 large_text = ""
 small_text = ""
 display_type = "state"
+display_type_interval = 10
 button1_text = ""
 button1_link = ""
 button2_text = ""
